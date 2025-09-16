@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Cryptography Login</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+<style>
+body { font-family: Arial, sans-serif; background:linear-gradient(135deg,#4e54c8,#8f94fb); display:flex; justify-content:center; align-items:center; height:100vh; margin:0; }
+.card { background:white; padding:20px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.2); width:400px; text-align:center; }
+input { width:92%; padding:10px; margin:8px 0; border-radius:6px; border:1px solid #ccc; font-size:15px; }
+button { width:95%; padding:10px; margin-top:8px; border-radius:6px; border:none; background:#4e54c8; color:white; font-size:15px; cursor:pointer; font-weight:bold; }
+button:hover { background:#8f94fb; transform:scale(1.03); }
+.secondary { background:#28a745; }
+.small { font-size:13px; color:#444; }
+#personalKeyDiv { display:none; } /* hidden initially */
+</style>
+</head>
+<body>
+<div class="card">
+<h2>🔐 Cryptography Login</h2>
+
+<input id="userid" placeholder="User ID" oninput="checkUserID()" />
+<p id="idStatus" class="small"></p>
+
+<input id="username" placeholder="Username (auto-fill)" />
+<input id="phone" placeholder="Phone (10 digits)" maxlength="10" oninput="validatePhone()" />
+<input id="password" type="password" placeholder="Password" />
+
+<div id="personalKeyDiv">
+    <input id="personalKey" type="text" placeholder="Enter Personal Key" />
+</div>
+
+<button id="loginBtn" onclick="startLogin()">Login</button>
+<button id="registerBtn" class="secondary" onclick="goToRegister()">Register</button>
+<button class="secondary" style="margin-top:5px;" onclick="resetForm()">Reset</button>
+
+<p id="msg" class="small"></p>
+</div>
+
+<script>
+let registeredUsers = JSON.parse(localStorage.getItem("registeredUsers")) || [];
+
+function checkUserID() {
+    const id = document.getElementById("userid").value.trim();
+    if (!id) { document.getElementById("idStatus").textContent = ""; return; }
+    const found = registeredUsers.find(u => u.userid === id);
+    if (found) {
+        document.getElementById("idStatus").textContent = "✅ Registered — autofilled username & phone";
+        document.getElementById("username").value = found.username;
+        document.getElementById("phone").value = found.phone;
+    } else {
+        document.getElementById("idStatus").textContent = "🆕 Not registered — click Register to create account";
+        document.getElementById("username").value = "";
+        document.getElementById("phone").value = "";
+    }
+}
+
+function validatePhone() {
+    const p = document.getElementById("phone").value.trim();
+    const ok = /^[0-9]{10}$/.test(p);
+    document.getElementById("msg").textContent = ok ? "" : "Phone must be 10 digits.";
+    return ok;
+}
+
+function startLogin() {
+    const userid = document.getElementById("userid").value.trim();
+    const username = document.getElementById("username").value.trim();
+    const phone = document.getElementById("phone").value.trim();
+    const password = document.getElementById("password").value;
+    const personalKeyDiv = document.getElementById("personalKeyDiv");
+    const personalKeyInput = document.getElementById("personalKey");
+    const personalKey = personalKeyInput.value.trim();
+
+    if (!userid || !username || !phone || !password) {
+        alert("Fill all fields.");
+        return;
+    }
+    if (!validatePhone()) { alert("Invalid phone."); return; }
+
+    const found = registeredUsers.find(u => u.userid === userid);
+    if (!found) {
+        alert("⚠️ User not registered. Redirecting...");
+        window.location.href = `registration.html?userid=${encodeURIComponent(userid)}&username=${encodeURIComponent(username)}&phone=${encodeURIComponent(phone)}`;
+        return;
+    }
+
+    if (found.username !== username || found.phone !== phone) {
+        alert("Username or phone mismatch for this ID.");
+        return;
+    }
+
+    // Verify password
+    const candidateHash = CryptoJS.PBKDF2(password, CryptoJS.enc.Hex.parse(found.salt), {
+        keySize: 64/32,
+        iterations: 15000,
+        hasher: CryptoJS.algo.SHA256
+    }).toString(CryptoJS.enc.Hex);
+
+    if (candidateHash !== found.passHash) { alert("Incorrect password."); return; }
+
+    // Show personal key input
+    personalKeyDiv.style.display = "block";
+    personalKeyInput.focus();
+    document.getElementById("msg").textContent = "Enter your Personal Key.";
+
+    if (!personalKey) return;
+
+    // Verify personal key
+    const personalKeyHash = CryptoJS.SHA256(personalKey).toString(CryptoJS.enc.Hex);
+    if (personalKeyHash !== found.personalKeyHash) {
+        alert("❌ Invalid Personal Key. Try again.");
+        personalKeyInput.value = "";
+        personalKeyInput.focus();
+        return;
+    }
+
+    alert("✅ Login Successful! Redirecting...");
+    window.location.href = "crypto_calculator.html";
+}
+
+function goToRegister() {
+    const userid = document.getElementById("userid").value.trim();
+    const username = document.getElementById("username").value.trim();
+    const phone = document.getElementById("phone").value.trim();
+    window.location.href = `registration.html?userid=${encodeURIComponent(userid)}&username=${encodeURIComponent(username)}&phone=${encodeURIComponent(phone)}`;
+}
+
+function resetForm() {
+    document.getElementById("userid").value = "";
+    document.getElementById("username").value = "";
+    document.getElementById("phone").value = "";
+    document.getElementById("password").value = "";
+    document.getElementById("personalKey").value = "";
+    document.getElementById("personalKeyDiv").style.display = "none";
+    document.getElementById("idStatus").textContent = "";
+    document.getElementById("msg").textContent = "";
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cryptography Calculator (Fixed Decryption)</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #f4f4f9; text-align: center; padding: 20px; }
+  select, input, button, textarea { margin: 5px; padding: 8px; border-radius: 6px; border: 1px solid #ccc; }
+  .key-group { margin: 5px 0; }
+  #result { margin-top: 10px; font-weight: bold; color: green; white-space: pre-wrap; }
+  .matrix-input input { width: 50px; margin: 2px; text-align: center; }
+  .playfair-matrix { display: grid; grid-template-columns: repeat(5, 40px); justify-content: center; margin-top: 10px; }
+  .playfair-cell { border: 1px solid #333; padding: 8px; font-weight: bold; background:#e0e0e0; }
+  .helper { font-size: 12px; color: red; margin-top: 2px; }
+  textarea { width: 90%; height: 80px; }
+</style>
+</head>
+<body>
+<h2>🔐 Cryptography Calculator</h2>
+
+<label for="algo">Choose Algorithm:</label>
+<select id="algo" onchange="updateInputs()">
+  <option value="caesar">Caesar Cipher</option>
+  <option value="playfair">Playfair Cipher</option>
+  <option value="vigenere">Vigenère Cipher</option>
+  <option value="hill">Hill Cipher</option>
+  <option value="affine">Affine Cipher</option>
+  <option value="des">DES</option>
+  <option value="3des">3DES</option>
+  <option value="signature">Digital Signature</option>
+</select><br>
+
+<textarea id="plaintext" placeholder="Enter Message (for encryption) or paste ciphertext here for decryption"></textarea><br>
+
+<!-- Key Inputs -->
+<div id="keyInputs">
+  <div id="caesarKey" class="key-group">
+    <input type="number" id="keyCaesar" placeholder="Enter Shift Number" oninput="validateCaesar()">
+  </div>
+  <div id="playfairKey" class="key-group" style="display:none;">
+    <input type="text" id="keyPlayfair" placeholder="Enter Key Word" oninput="validateLetters('keyPlayfair'); renderPlayfairMatrix()">
+    <div id="playfairMatrixContainer" class="playfair-matrix"></div>
+  </div>
+  <div id="vigenereKey" class="key-group" style="display:none;">
+    <input type="text" id="keyVigenere" placeholder="Enter Key Word" oninput="validateLetters('keyVigenere')">
+  </div>
+  <div id="hillKey" class="key-group" style="display:none;">
+    <label>Select Matrix Size: </label>
+    <select id="hillSize" onchange="renderHillMatrix()">
+      <option value="2">2x2</option>
+      <option value="3">3x3</option>
+    </select>
+    <div id="hillMatrix" class="matrix-input"></div>
+  </div>
+  <div id="affineKey" class="key-group" style="display:none;">
+    <input type="number" id="keyAffineA" placeholder="Enter 'a' (coprime with 26)">
+    <input type="number" id="keyAffineB" placeholder="Enter 'b' (shift)">
+  </div>
+  <div id="desKey" class="key-group" style="display:none;">
+    <input type="text" id="keyDES" placeholder="DES Key (16 hex chars)" oninput="validateDES()">
+    <input type="text" id="ivDES" placeholder="DES IV (16 hex chars, optional)" oninput="validateDES()">
+    <div id="desHelper" class="helper"></div>
+  </div>
+  <div id="tdesKey" class="key-group" style="display:none;">
+    <input type="text" id="key3DES" placeholder="3DES Key (32 or 48 hex chars)" oninput="validate3DES()">
+    <input type="text" id="iv3DES" placeholder="3DES IV (16 hex chars, optional)" oninput="validate3DES()">
+    <div id="tdesHelper" class="helper"></div>
+  </div>
+  <div id="signatureKey" class="key-group" style="display:none;">
+    <input type="text" id="sigKey" placeholder="Private/Public Key (any text)">
+    <div class="helper">Use same key for signing & verifying</div>
+    <input type="text" id="sigInput" placeholder="Paste signature to verify" style="margin-top:5px; width:300px;">
+    <button onclick="verifySignature()">Verify Signature</button>
+  </div>
+</div>
+
+<button onclick="encrypt()">Encrypt/Sign</button>
+<button onclick="decrypt()">Decrypt/Verify</button>
+
+<p id="result"></p>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+<script>
+// --- Utility helpers ---
+function mod(n, m) { return ((n % m) + m) % m; }
+
+function egcd(a, b) {
+  if (b === 0) return { g: a, x: 1, y: 0 };
+  const { g, x: x1, y: y1 } = egcd(b, a % b);
+  return { g, x: y1, y: x1 - Math.floor(a / b) * y1 };
+}
+function modInverse(a, m) {
+  a = mod(a, m);
+  const res = egcd(a, m);
+  if (res.g !== 1) return null;
+  return mod(res.x, m);
+}
+
+// normalize input: remove common labels users may copy/paste
+function normalizeCipherInput(s){
+  if(!s) return s;
+  let t = String(s).trim();
+  t = t.replace(/^\s*(Encrypted:|Ciphertext:|Signature:|Encrypted\s*\(base64\):)\s*/i, '');
+  return t;
+}
+
+// --- Dynamic Input Visibility ---
+function updateInputs() {
+  const algo = document.getElementById("algo").value;
+  document.getElementById("caesarKey").style.display = algo==="caesar"?"block":"none";
+  document.getElementById("playfairKey").style.display = algo==="playfair"?"block":"none";
+  document.getElementById("vigenereKey").style.display = algo==="vigenere"?"block":"none";
+  document.getElementById("hillKey").style.display = algo==="hill"?"block":"none";
+  document.getElementById("affineKey").style.display = algo==="affine"?"block":"none";
+  document.getElementById("desKey").style.display = algo==="des"?"block":"none";
+  document.getElementById("tdesKey").style.display = algo==="3des"?"block":"none";
+  document.getElementById("signatureKey").style.display = algo==="signature"?"block":"none";
+  if(algo==="hill") renderHillMatrix();
+  if(algo==="playfair") renderPlayfairMatrix();
+}
+
+// --- Validation ---
+function validateCaesar(){ let val=document.getElementById("keyCaesar").value; if(isNaN(val)) document.getElementById("keyCaesar").value=''; }
+function validateLetters(id){ let input=document.getElementById(id); input.value=input.value.replace(/[^A-Za-z]/g,'').toUpperCase(); }
+function validateDES(){ const key=document.getElementById("keyDES").value.trim(); const iv=document.getElementById("ivDES").value.trim(); let msg=""; if(key && !/^[0-9A-Fa-f]{16}$/.test(key)) msg+="DES key must be 16 hex chars. "; if(iv && !/^[0-9A-Fa-f]{16}$/.test(iv)) msg+="DES IV must be 16 hex chars."; document.getElementById("desHelper").textContent=msg; }
+function validate3DES(){ const key=document.getElementById("key3DES").value.trim(); const iv=document.getElementById("iv3DES").value.trim(); let msg=""; if(key && !/^[0-9A-Fa-f]{32}$/.test(key) && !/^[0-9A-Fa-f]{48}$/.test(key)) msg+="3DES key must be 32 or 48 hex chars. "; if(iv && !/^[0-9A-Fa-f]{16}$/.test(iv)) msg+="3DES IV must be 16 hex chars."; document.getElementById("tdesHelper").textContent=msg; }
+
+// --- Hill Matrix renderer ---
+function renderHillMatrix(){
+  const size=parseInt(document.getElementById("hillSize").value);
+  const container=document.getElementById("hillMatrix");
+  container.innerHTML="";
+  for(let r=0;r<size;r++){
+    for(let c=0;c<size;c++){
+      let inp=document.createElement("input"); inp.type="number"; inp.id=`hill_${r}_${c}`; inp.placeholder="0";
+      container.appendChild(inp);
+    }
+    container.appendChild(document.createElement("br"));
+  }
+}
+
+// --- Playfair Matrix renderer (UI) ---
+function renderPlayfairMatrix(){
+  const key=document.getElementById("keyPlayfair").value.toUpperCase().replace(/J/g,'I');
+  let matrix=[], used={};
+  for(let char of key) if(!used[char] && char>='A' && char<='Z'){ matrix.push(char); used[char]=true; }
+  for(let i=0;i<26;i++){
+    let c=String.fromCharCode(65+i); if(c==='J') continue;
+    if(!used[c]){ matrix.push(c); used[c]=true; }
+  }
+  const container=document.getElementById("playfairMatrixContainer");
+  container.innerHTML="";
+  for(let i=0;i<25;i++){
+    const cell=document.createElement("div"); cell.className="playfair-cell"; cell.innerText=matrix[i];
+    container.appendChild(cell);
+  }
+}
+
+// --- Caesar Cipher ---
+function caesarCipher(text, shift, encrypt=true){
+  if (isNaN(shift)) { alert("Enter a valid Caesar shift (number)."); return ""; }
+  shift = parseInt(shift,10) % 26;
+  if (!encrypt) shift = (26 - shift) % 26;
+  let out = "";
+  for(let ch of text){
+    if(ch >= 'A' && ch <= 'Z'){
+      out += String.fromCharCode(65 + (ch.charCodeAt(0)-65 + shift) % 26);
+    } else if(ch >= 'a' && ch <= 'z'){
+      out += String.fromCharCode(97 + (ch.charCodeAt(0)-97 + shift) % 26);
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+// --- Vigenere Cipher ---
+function vigenereCipher(text, key, encrypt=true){
+  key = (key||"").replace(/[^A-Za-z]/g,'');
+  if(!key){ alert("Enter a valid Vigenère key (letters only)."); return ""; }
+  let out = "", ki = 0;
+  for(let ch of text){
+    if(/[A-Za-z]/.test(ch)){
+      const base = ch === ch.toUpperCase() ? 65 : 97;
+      const chVal = ch.charCodeAt(0) - base;
+      const kVal = key[ki % key.length].toUpperCase().charCodeAt(0) - 65;
+      let val = encrypt ? (chVal + kVal) % 26 : (chVal - kVal + 26) % 26;
+      out += String.fromCharCode(base + val);
+      ki++;
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+// --- Playfair Cipher ---
+function buildPlayfairMatrix(key){
+  key = (key||"").toUpperCase().replace(/J/g,'I').replace(/[^A-Z]/g,'');
+  let used = {}, matrix = [];
+  for(let c of key) if(!used[c]){ used[c]=true; matrix.push(c); }
+  for(let i=0;i<26;i++){
+    let c = String.fromCharCode(65+i); if(c === 'J') continue;
+    if(!used[c]){ used[c]=true; matrix.push(c); }
+  }
+  // build 5x5
+  const grid = [];
+  for(let r=0;r<5;r++) grid.push(matrix.slice(r*5, r*5+5));
+  const pos = {};
+  for(let r=0;r<5;r++) for(let c=0;c<5;c++) pos[grid[r][c]] = {r,c};
+  return {grid, pos};
+}
+
+function preparePlayfairPlaintext(text){
+  text = (text||"").toUpperCase().replace(/J/g,'I').replace(/[^A-Z]/g,'');
+  const digraphs = [];
+  let i=0;
+  while(i < text.length){
+    const a = text[i];
+    const b = (i+1 < text.length) ? text[i+1] : '';
+    if(!b){
+      digraphs.push([a,'X']);
+      i++;
+    } else if(a === b){
+      digraphs.push([a,'X']);
+      i++; // keep the second duplicate for next pair
+    } else {
+      digraphs.push([a,b]);
+      i += 2;
+    }
+  }
+  return digraphs;
+}
+
+function parsePlayfairCiphertext(text){
+  // For decryption we must NOT insert Xs or alter pairs: just split into pairs
+  text = (text||"").toUpperCase().replace(/J/g,'I').replace(/[^A-Z]/g,'');
+  const digraphs = [];
+  for(let i=0;i<text.length;i+=2){
+    const a = text[i];
+    const b = (i+1 < text.length) ? text[i+1] : 'X';
+    digraphs.push([a,b]);
+  }
+  return digraphs;
+}
+
+function playfairCipher(text, key, encrypt=true){
+  key = key || "";
+  if(!key.replace(/[^A-Za-z]/g,'')){ alert("Enter a Playfair key."); return ""; }
+  const {grid, pos} = buildPlayfairMatrix(key);
+  const digraphs = encrypt ? preparePlayfairPlaintext(text) : parsePlayfairCiphertext(text);
+  const resultPairs = [];
+  for(const [a,b] of digraphs){
+    // if characters are missing (shouldn't happen) skip
+    if(!a || !b) continue;
+    const pa = pos[a], pb = pos[b];
+    if(!pa || !pb){ continue; } // shouldn't happen
+    if(pa.r === pb.r){
+      // same row
+      if(encrypt){
+        resultPairs.push(grid[pa.r][ (pa.c+1)%5 ] + grid[pb.r][ (pb.c+1)%5 ]);
+      } else {
+        resultPairs.push(grid[pa.r][ (pa.c+4)%5 ] + grid[pb.r][ (pb.c+4)%5 ]);
+      }
+    } else if(pa.c === pb.c){
+      // same column
+      if(encrypt){
+        resultPairs.push(grid[(pa.r+1)%5][pa.c] + grid[(pb.r+1)%5][pb.c]);
+      } else {
+        resultPairs.push(grid[(pa.r+4)%5][pa.c] + grid[(pb.r+4)%5][pb.c]);
+      }
+    } else {
+      // rectangle
+      resultPairs.push(grid[pa.r][pb.c] + grid[pb.r][pa.c]);
+    }
+  }
+  return resultPairs.join('');
+}
+
+// --- Hill Cipher (2x2 & 3x3) ---
+function parseHillKey(){
+  const size = parseInt(document.getElementById("hillSize").value);
+  const nums = [];
+  for(let r=0;r<size;r++){
+    for(let c=0;c<size;c++){
+      const val = parseInt(document.getElementById(`hill_${r}_${c}`).value,10);
+      if(isNaN(val)) return null;
+      nums.push(mod(val,26));
+    }
+  }
+  return {size, nums};
+}
+
+function matMulVec(mat, vec, size){
+  const out = new Array(size).fill(0);
+  for(let r=0;r<size;r++){
+    let s=0;
+    for(let c=0;c<size;c++){
+      s += mat[r*size+c] * vec[c];
+    }
+    out[r] = mod(s,26);
+  }
+  return out;
+}
+
+function det2(mat){
+  return mod(mat[0]*mat[3] - mat[1]*mat[2], 26);
+}
+function det3(mat){
+  // mat is length 9: [a b c, d e f, g h i]
+  const a=mat[0], b=mat[1], c=mat[2], d=mat[3], e=mat[4], f=mat[5], g=mat[6], h=mat[7], i=mat[8];
+  return mod(a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g), 26);
+}
+
+function adjugate2(mat){
+  // returns length4 adjugate (classical adjoint)
+  return [mat[3], mod(-mat[1],26), mod(-mat[2],26), mat[0]];
+}
+
+function adjugate3(mat){
+  // compute cofactor matrix then transpose
+  const a=mat[0], b=mat[1], c=mat[2], d=mat[3], e=mat[4], f=mat[5], g=mat[6], h=mat[7], i=mat[8];
+  const A =  (e*i - f*h);
+  const B = -(d*i - f*g);
+  const C =  (d*h - e*g);
+  const D = -(b*i - c*h);
+  const E =  (a*i - c*g);
+  const F = -(a*h - b*g);
+  const G =  (b*f - c*e);
+  const H = -(a*f - c*d);
+  const I =  (a*e - b*d);
+  // cofactor matrix:
+  const cof = [A,B,C,D,E,F,G,H,I];
+  // transpose (adjugate)
+  return [cof[0], cof[3], cof[6], cof[1], cof[4], cof[7], cof[2], cof[5], cof[8]].map(x => mod(x,26));
+}
+
+function invertHillMatrix(mat, size){
+  if(size === 2){
+    const det = det2(mat);
+    const invDet = modInverse(det,26);
+    if(invDet === null) return null;
+    const adj = adjugate2(mat);
+    return adj.map(x => mod(x * invDet, 26));
+  } else if(size === 3){
+    const det = det3(mat);
+    const invDet = modInverse(det,26);
+    if(invDet === null) return null;
+    const adj = adjugate3(mat);
+    return adj.map(x => mod(x * invDet, 26));
+  } else {
+    return null;
+  }
+}
+
+function hillCipher(text, keyObj, encrypt=true){
+  if(!keyObj) { alert("Enter the Hill key matrix values."); return ""; }
+  const size = keyObj.size, mat = keyObj.nums.map(n => mod(n,26));
+  // prepare plaintext: only letters, uppercase
+  let letters = (text||"").toUpperCase().replace(/[^A-Z]/g,'');
+  if(letters.length === 0) { alert("Enter text (letters) for Hill cipher."); return ""; }
+  // pad with X (23) to multiple of size
+  while(letters.length % size !== 0) letters += 'X';
+  if(encrypt){
+    let out = "";
+    for(let i=0;i<letters.length;i+=size){
+      const vec = [];
+      for(let j=0;j<size;j++) vec.push(letters.charCodeAt(i+j) - 65);
+      const res = matMulVec(mat, vec, size);
+      for(let r=0;r<size;r++) out += String.fromCharCode(res[r] + 65);
+    }
+    return out;
+  } else {
+    // invert matrix
+    const inv = invertHillMatrix(mat, size);
+    if(!inv){ alert("Hill matrix is not invertible mod 26. Choose another matrix."); return ""; }
+    let out = "";
+    for(let i=0;i<letters.length;i+=size){
+      const vec = [];
+      for(let j=0;j<size;j++) vec.push(letters.charCodeAt(i+j) - 65);
+      const res = matMulVec(inv, vec, size);
+      for(let r=0;r<size;r++) out += String.fromCharCode(mod(res[r],26) + 65);
+    }
+    return out;
+  }
+}
+
+// --- Affine Cipher ---
+function affineCipher(text, a, b, encrypt = true) {
+  a = parseInt(a,10); b = parseInt(b,10);
+  if(isNaN(a) || isNaN(b)) { alert("Enter numeric keys for Affine 'a' and 'b'."); return ""; }
+  text = (text||"").toUpperCase().replace(/[^A-Z]/g,'');
+  let result = "";
+  const m = 26;
+  if (encrypt) {
+    for (let ch of text) {
+      let x = ch.charCodeAt(0) - 65;
+      let enc = mod((a * x + b), m);
+      result += String.fromCharCode(enc + 65);
+    }
+  } else {
+    const invA = modInverse(a, m);
+    if (invA === null) { alert("Invalid 'a'. Must be coprime with 26."); return ""; }
+    for (let ch of text) {
+      let x = ch.charCodeAt(0) - 65;
+      let dec = mod(invA * (x - b), m);
+      result += String.fromCharCode(dec + 65);
+    }
+  }
+  return result;
+}
+
+// --- Encryption / Decryption dispatcher ---
+function encrypt(){ processText(true); }
+function decrypt(){ processText(false); }
+
+function processText(encrypt){
+  const rawText = document.getElementById("plaintext").value || "";
+  const text = rawText.trim();
+  const algo = document.getElementById("algo").value;
+  let result = "";
+  if(!text && algo !== "signature"){ alert("Please enter message or paste ciphertext (for decryption)."); return; }
+
+  switch(algo){
+    case "caesar":{
+      const shiftVal = parseInt(document.getElementById("keyCaesar").value,10);
+      if(isNaN(shiftVal)){ alert("Enter a valid Caesar shift number."); return; }
+      result = caesarCipher(text, shiftVal, encrypt);
+      break;
+    }
+
+    case "vigenere":{
+      const vkey = document.getElementById("keyVigenere").value;
+      result = vigenereCipher(text, vkey, encrypt);
+      break;
+    }
+
+    case "playfair":{
+      const pkey = document.getElementById("keyPlayfair").value;
+      result = playfairCipher(text, pkey, encrypt);
+      break;
+    }
+
+    case "hill":{
+      const hillKey = parseHillKey();
+      if(!hillKey){ alert("All Hill matrix values must be numbers."); return; }
+      result = hillCipher(text, hillKey, encrypt);
+      break;
+    }
+
+    case "affine":{
+      const aVal = parseInt(document.getElementById("keyAffineA").value,10);
+      const bVal = parseInt(document.getElementById("keyAffineB").value,10);
+      if(isNaN(aVal) || isNaN(bVal)){ alert("Enter numeric keys for Affine 'a' and 'b'."); return; }
+      result = affineCipher(text, aVal, bVal, encrypt);
+      break;
+    }
+
+    case "signature":{
+      const sigKey = document.getElementById("sigKey").value.trim();
+      if(!sigKey){ alert("Enter key for signing/verifying."); return; }
+      if(encrypt){
+        const signature = CryptoJS.HmacSHA256(text, sigKey).toString();
+        document.getElementById("sigInput").value = signature;
+        result = signature; // raw signature (hex)
+      } else {
+        verifySignature(); return;
+      }
+      break;
+    }
+
+    case "des":{
+      const k = document.getElementById("keyDES").value.trim();
+      const iv = document.getElementById("ivDES").value.trim();
+      if(!k || !/^[0-9A-Fa-f]{16}$/.test(k)){ alert("DES key must be 16 hex chars (8 bytes)."); return; }
+      const opts = { mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7 };
+      if(iv){ if(!/^[0-9A-Fa-f]{16}$/.test(iv)){ alert("DES IV must be 16 hex chars (8 bytes)."); return; } opts.iv = CryptoJS.enc.Hex.parse(iv); }
+      try{
+        if(encrypt){
+          const ciphertext = CryptoJS.DES.encrypt(text, CryptoJS.enc.Hex.parse(k), opts).toString();
+          result = ciphertext; // base64 (raw) - no prefix so it can be directly pasted into decryption field
+        } else {
+          const ct = normalizeCipherInput(text);
+          const plaintext = CryptoJS.DES.decrypt(ct, CryptoJS.enc.Hex.parse(k), opts).toString(CryptoJS.enc.Utf8);
+          result = plaintext || "(Decryption produced empty output — possibly wrong key or corrupted ciphertext)";
+        }
+      } catch(e){ alert("DES error: check key/IV and ciphertext. " + (e && e.message? e.message : '')); result = ""; }
+      break;
+    }
+
+    case "3des":{
+      const k3 = document.getElementById("key3DES").value.trim();
+      const iv3 = document.getElementById("iv3DES").value.trim();
+      if(!k3 || (!/^[0-9A-Fa-f]{32}$/.test(k3) && !/^[0-9A-Fa-f]{48}$/.test(k3))){ alert("3DES key must be 32 or 48 hex chars."); return; }
+      const opts = { mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7 };
+      if(iv3){ if(!/^[0-9A-Fa-f]{16}$/.test(iv3)){ alert("3DES IV must be 16 hex chars (8 bytes)."); return; } opts.iv = CryptoJS.enc.Hex.parse(iv3); }
+      try{
+        if(encrypt){
+          const ciphertext = CryptoJS.TripleDES.encrypt(text, CryptoJS.enc.Hex.parse(k3), opts).toString();
+          result = ciphertext; // base64
+        } else {
+          const ct = normalizeCipherInput(text);
+          const plaintext = CryptoJS.TripleDES.decrypt(ct, CryptoJS.enc.Hex.parse(k3), opts).toString(CryptoJS.enc.Utf8);
+          result = plaintext || "(Decryption produced empty output — possibly wrong key or corrupted ciphertext)";
+        }
+      } catch(e){ alert("3DES error: check key/IV and ciphertext. " + (e && e.message? e.message : '')); result = ""; }
+      break;
+    }
+
+    default:
+      result="(Cipher for "+algo+" not implemented.)";
+  }
+
+  document.getElementById("result").innerText = result;
+}
+
+// --- Signature Verification ---
+function verifySignature(){
+  const text = document.getElementById("plaintext").value;
+  const sigKey = document.getElementById("sigKey").value.trim();
+  const sigInput = document.getElementById("sigInput").value.trim();
+  if(!text || !sigKey || !sigInput){ alert("Enter message, key, and signature to verify."); return; }
+  const check = CryptoJS.HmacSHA256(text, sigKey).toString();
+  document.getElementById("result").innerText = (check === sigInput) ? "✅ Signature Verified" : "❌ Signature Invalid";
+}
+
+// Initialize
+updateInputs();
+</script>
+
+<hr>
+<h3 style="text-align:left;">📘 Algorithm Explanations</h3>
+<div id="explanations" style="text-align:left; max-width:800px; margin:auto; line-height:1.6;">
+  <h4>Caesar Cipher</h4>
+  <p>Shifts each letter by a fixed number (the key). Example: Shift 3 → A → D, HELLO → KHOOR.</p>
+  <h4>Playfair Cipher</h4>
+  <p>Uses a 5×5 matrix built from a keyword. Encrypts text in pairs of letters (digraphs). J is replaced by I. Decryption now correctly splits ciphertext into pairs without inserting padding.</p>
+  <h4>Vigenère Cipher</h4>
+  <p>Uses a repeating keyword to shift letters. Example: Key = LEMON, Text = ATTACK → LXFOPV.</p>
+  <h4>Hill Cipher</h4>
+  <p>Uses linear algebra with an invertible key matrix modulo 26. Only 2x2 and 3x3 supported here.</p>
+  <h4>Affine Cipher</h4>
+  <p>Uses formula E(x) = (ax + b) mod 26 and D(x) = a<sup>-1</sup>(x - b) mod 26. 'a' must be coprime with 26.</p>
+  <h4>DES (Data Encryption Standard)</h4>
+  <p>Block cipher, 64-bit blocks, 56-bit effective key. For DES/3DES encryption the output is shown as raw Base64 (no label) so you can paste it directly into the plaintext box for decryption. Use hex keys: DES key = 16 hex chars (8 bytes), IV (optional) = 16 hex chars (8 bytes).</p>
+  <h4>3DES (Triple DES)</h4>
+  <p>Applies DES three times (2 or 3 keys). Provide key as 32 or 48 hex chars (16 or 24 bytes). IV (optional) = 16 hex chars.</p>
+  <h4>Digital Signature</h4>
+  <p>Generates HMAC-SHA256 signature using a user-provided key. Signing places the raw hex signature in the signature box so you can verify immediately.</p>
+</div>
+</body>
+</html>

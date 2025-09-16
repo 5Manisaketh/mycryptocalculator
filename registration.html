@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Register New User</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background: #eef6ff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+}
+.container {
+    background: white;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0px 4px 10px rgba(0,0,0,0.1);
+    width: 320px;
+    text-align: center;
+}
+input {
+    width: 90%;
+    padding: 8px;
+    margin: 8px 0;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    font-size: 16px;
+}
+button {
+    background: green;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+    margin-top: 10px;
+    width: 95%;
+}
+button:hover { background: darkgreen; }
+</style>
+</head>
+<body>
+<div class="container">
+    <h2>🆕 Register New User</h2>
+    <input type="text" id="userid" placeholder="Enter ID"><br>
+    <input type="text" id="username" placeholder="Enter Username"><br>
+    <input type="text" id="phone" placeholder="Enter Phone Number" maxlength="10"><br>
+    <input type="password" id="password" placeholder="Enter Password"><br>
+    <input type="password" id="confirmPassword" placeholder="Confirm Password"><br>
+    <input type="text" id="personalKey" placeholder="Enter Personal Key"><br>
+    <button onclick="registerUser()">Register</button>
+</div>
+
+<script>
+// Pre-fill from login query params
+const urlParams = new URLSearchParams(window.location.search);
+document.getElementById("userid").value = urlParams.get("userid") || "";
+document.getElementById("username").value = urlParams.get("username") || "";
+document.getElementById("phone").value = urlParams.get("phone") || "";
+
+function registerUser() {
+    let userid = document.getElementById("userid").value.trim();
+    let username = document.getElementById("username").value.trim();
+    let phone = document.getElementById("phone").value.trim();
+    let password = document.getElementById("password").value;
+    let confirmPassword = document.getElementById("confirmPassword").value;
+    let personalKey = document.getElementById("personalKey").value.trim();
+
+    if (!userid || !username || !phone || !password || !confirmPassword || !personalKey) {
+        alert("Please fill all fields.");
+        return;
+    }
+
+    if (!/^[0-9]{10}$/.test(phone)) {
+        alert("Enter a valid 10-digit phone number.");
+        return;
+    }
+
+    if (password !== confirmPassword) {
+        alert("Passwords do not match.");
+        return;
+    }
+
+    // Load existing users
+    let users = JSON.parse(localStorage.getItem("registeredUsers")) || [];
+
+    // Check if User ID, Username, or Phone is already registered
+    if (users.some(u => u.userid === userid)) {
+        alert("⚠️ User ID already exists. Please use another one.");
+        return;
+    }
+    if (users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
+        alert("⚠️ Username already exists. Please choose another.");
+        return;
+    }
+    if (users.some(u => u.phone === phone)) {
+        alert("⚠️ Phone number already registered. Please use another.");
+        return;
+    }
+
+    // Hash password with salt
+    let salt = CryptoJS.lib.WordArray.random(16).toString(CryptoJS.enc.Hex);
+    let passHash = CryptoJS.PBKDF2(password, CryptoJS.enc.Hex.parse(salt), {
+        keySize: 64/32,
+        iterations: 15000,
+        hasher: CryptoJS.algo.SHA256
+    }).toString(CryptoJS.enc.Hex);
+
+    // Hash personal key
+    let personalKeyHash = CryptoJS.SHA256(personalKey).toString(CryptoJS.enc.Hex);
+
+    // Store user
+    users.push({ userid, username, phone, salt, passHash, personalKeyHash });
+    localStorage.setItem("registeredUsers", JSON.stringify(users));
+
+    alert("✅ Registration Successful! Redirecting to Login page...");
+    window.location.href = "login.html";
+}
+</script>
+</body>
+</html>
